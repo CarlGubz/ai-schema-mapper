@@ -1,0 +1,7 @@
+Canonical Field,Matched Source Column,NameScore,ValueScore,Confidence
+Functional Loc. (JOIN KEY),Functional Location,1.0,1.0,0.99
+Description,Description of measuring point,1.0,1.0,0.99
+Meas/TotCtr,Meas/TotCountrRdg   _,1.0,1.0,0.99
+Counter reading,Counter reading,1.0,1.0,0.99
+annual_estimate,Annual estimate,1.0,1.0,0.99
+Measuring point (MP id),Measuring point,1.0,1.0,0.99
