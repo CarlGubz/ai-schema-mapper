@@ -1,0 +1,6 @@
+pandas>=2.0
+openpyxl>=3.1
+openai>=1.40
+azure-functions>=1.18
+# Optional (enable when STORAGE_BACKEND=azure_blob):
+# azure-storage-blob>=12.19
