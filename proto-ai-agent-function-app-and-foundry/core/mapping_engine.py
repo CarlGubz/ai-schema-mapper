@@ -29,8 +29,8 @@ def run_mapping(workbook_path: str, cfg: dict) -> dict:
         if len(info["candidates"]) > 1:
             warnings.append(f"Role {role} matched {info['candidates']}; picked '{chosen}' by row count.")
 
-    # Measurement-Points functional-location values for the LTP join-key bonus
-    mp_role = "MEASUREMENT_POINTS"
+    # Use the configured reference role for the functional-location join bonus.
+    mp_role = cfg.get("normalization", {}).get("join_key_role", "MEASUREMENT_POINTS")
     mp_key_values = set()
     if mp_role in role_to_sheet:
         mp_df = frames[role_to_sheet[mp_role]]

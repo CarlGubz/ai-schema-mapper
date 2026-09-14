@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import base64
 import tempfile
+from datetime import datetime, timezone
 import pandas as pd
 
 from .settings import settings
@@ -16,6 +17,7 @@ from .settings import settings
 class LocalStorage:
     def __init__(self, output_dir: str | None = None):
         self.output_dir = output_dir or settings.LOCAL_OUTPUT_DIR
+        self.run_folder = None
         os.makedirs(self.output_dir, exist_ok=True)
 
     def fetch_input(self, ref: dict) -> str:
@@ -31,7 +33,10 @@ class LocalStorage:
         raise ValueError("input ref must contain 'path' or 'content_base64'")
 
     def write_csv(self, df: pd.DataFrame, name: str, run_id: str) -> str:
-        run_dir = os.path.join(self.output_dir, run_id)
+        if self.run_folder is None:
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+            self.run_folder = f"{timestamp}_{run_id}"
+        run_dir = os.path.join(self.output_dir, self.run_folder)
         os.makedirs(run_dir, exist_ok=True)
         dest = os.path.join(run_dir, name)
         df.to_csv(dest, index=False)

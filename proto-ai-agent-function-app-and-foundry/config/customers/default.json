@@ -7,6 +7,7 @@
       "target": "NEO",
       "match_patterns": [
         "ltp",
+        "parts",
         "major component",
         "replacement schedule"
       ]
@@ -17,7 +18,8 @@
       "match_patterns": [
         "measurement point",
         "measuring point",
-        "meas point"
+        "meas point",
+        "ik07"
       ]
     }
   ],
@@ -43,6 +45,7 @@
   },
   "normalization": {
     "join_key_canonical": "FunctionalLoc",
+    "join_key_role": "MEASUREMENT_POINTS",
     "reject_rules": [
       "missing_join_key",
       "missing_identity",

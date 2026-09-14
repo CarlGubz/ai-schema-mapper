@@ -17,4 +17,4 @@ RUN pip install --no-cache-dir -r requirements-foundry.txt
 COPY . .
 
 EXPOSE 8088
-CMD ["uvicorn", "foundry_app:app", "--host", "0.0.0.0", "--port", "8088"]
+CMD ["python", "foundry_app.py"]

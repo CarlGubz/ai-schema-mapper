@@ -137,12 +137,31 @@ Added for this target:
 
 | File | Purpose |
 |---|---|
-| `foundry_app.py` | Invocations-protocol HTTP host wrapping `run_agent` (Foundry counterpart of `function_app.py`). |
-| `Dockerfile` | linux/amd64 image (Foundry requires x86_64), Python 3.13, runs `uvicorn foundry_app:app`. |
-| `requirements-foundry.txt` | base deps + FastAPI/uvicorn + `azure-identity`/`azure-ai-projects`. |
+| `foundry_app.py` | Responses-protocol HTTP host wrapping `run_agent` (Foundry counterpart of `function_app.py`). |
+| `Dockerfile` | linux/amd64 image (Foundry requires x86_64), Python 3.13, runs `python foundry_app.py`. |
+| `requirements-foundry.txt` | base deps + `azure-ai-agentserver-responses` + `azure-identity`/`azure-ai-projects`. |
 | `azure.yaml` | azd project file; `azd ai agent init` augments it with the Foundry agent definition. |
 | `.env.foundry.example` | env vars for the gateway swap + Blob output. |
 | `.dockerignore` | keeps build context clean. |
+
+**Protocol.** `foundry_app.py` hosts the OpenAI-compatible **Responses** protocol
+(`POST /responses`) via the `azure-ai-agentserver-responses` SDK, not the raw
+Invocations protocol — so any OpenAI Responses-compatible client can call it, and
+the platform manages session lifecycle for you. This agent is single-turn (one file
+in, one report out), so it doesn't use conversation history: the caller's message
+text *is* the `run_agent` request contract, JSON-encoded, and the reply text *is*
+the `run_agent` response contract, JSON-encoded —
+
+```python
+resp = client.responses.create(model="<agent-name>", input=json.dumps({
+    "customer_id": "default",
+    "input": {"path": "/data/CB_MM_LTP_AUGUST.xlsx"},
+}))
+result = json.loads(resp.output_text)
+```
+
+`GET /readiness` (SDK built-in) and `GET /health` (kept for continuity with
+existing probes) are both available for availability checks.
 
 **Model gateway swap.** Set `MODEL_PROVIDER=foundry` and `FOUNDRY_PROJECT_ENDPOINT`.
 `core/llm_mapper.py` then builds the client via
@@ -168,13 +187,16 @@ docker push <acr>.azurecr.io/fmg-agent:latest
 # register the image as a Hosted Agent via azd / Python SDK / REST
 ```
 
-**Logic Apps calls it** at the stable hosted-agent endpoint
-`https://{project_endpoint}/agents/{agent_name}` (Entra auth), posting the same request
-contract. You gain agent versioning/weighted rollouts, built-in observability, and the
-content-safety layer. Set `STORAGE_BACKEND=azure_blob` so outputs land in Blob for the
-downstream Logic Apps actions.
+**Logic Apps calls it** at the stable hosted-agent Responses endpoint
+`https://{project_endpoint}/agents/{agent_name}/endpoint/protocols/openai/responses`
+(Entra auth), posting `{"model": "...", "input": "<run_agent request JSON>"}` and
+reading the request contract's response back out of `output_text` — an HTTP action
+with an OpenAI-shaped body works, or any OpenAI Responses-compatible SDK. You gain
+agent versioning, built-in observability, and the content-safety layer. Set
+`STORAGE_BACKEND=azure_blob` so outputs land in Blob for the downstream Logic Apps
+actions.
 
-> Two version-sensitive notes: confirm the exact **Invocations envelope** and the
+> Two version-sensitive notes: confirm the exact **Responses endpoint path** and the
 > **azd agent host** against the current Foundry quickstart (the SDK is evolving), and
 > note the Foundry RBAC roles were recently renamed (Foundry User/Owner/Project Manager,
 > formerly Azure AI …).
@@ -214,9 +236,21 @@ exactly; customer-file confidence means **NEO 0.813 / LAO 0.99**.
 ## 8. Onboarding a new customer (no code)
 
 1. `cp config/customers/_TEMPLATE.json config/customers/acme.json`
-2. Set `sheet_config` patterns to match Acme's tab names; edit each field's `aliases`
-   to Acme's headers; keep `output_columns` fixed to the NEO/LAO schema.
-3. Call the agent with `"customer_id": "acme"`.
+2. Set `sheet_config` patterns to match Acme's tab names; the `role` is an internal
+  logical name and does not have to equal the Excel tab name. For example:
+  ```json
+  {
+    "role": "ASSET_REGISTER",
+    "target": "NEO",
+    "match_patterns": ["asset register", "equipment", "fleet"]
+  }
+  ```
+  Add one entry for each workbook sheet that should be processed. The agent reads all
+  workbook tabs and reports the concrete matched name as `mapping_report.matched_sheets[].sheet_name`.
+3. Set `normalization.join_key_role` to the role containing the reference
+  `FunctionalLoc` values, then edit each field's `aliases` to Acme's headers; keep
+  `output_columns` fixed to the NEO/LAO schema.
+4. Call the agent with `"customer_id": "acme"`.
 
 ## 9. Deliberate non-goals
 

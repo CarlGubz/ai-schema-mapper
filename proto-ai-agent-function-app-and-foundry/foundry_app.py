@@ -1,8 +1,22 @@
-"""Microsoft Foundry — Hosted Agent entrypoint (Invocations protocol).
+"""Microsoft Foundry — Hosted Agent entrypoint (Responses protocol).
 
-Thin HTTP wrapper over agent.run_agent, the Foundry counterpart of function_app.py.
+Thin wrapper over agent.run_agent, the Foundry counterpart of function_app.py.
 The entire core (core/, agent.py, configs, prompt) is unchanged — deploying to Foundry
 only swaps the entrypoint and (optionally) the model gateway via MODEL_PROVIDER=foundry.
+
+This host implements the OpenAI-compatible **Responses** protocol via the
+`azure-ai-agentserver-responses` SDK (POST /responses) rather than a bespoke
+Invocations (POST /invocations) payload. The platform then manages conversation
+history/session lifecycle and any OpenAI-compatible SDK can call the agent directly.
+
+run_agent's request/response contract (see agent.py) doesn't map onto a chat
+message naturally — this agent processes a file and returns a structured report,
+it doesn't converse — so the contract travels as JSON text: the caller's message
+text *is* the run_agent request dict, JSON-encoded, and the reply text *is* the
+run_agent response dict, JSON-encoded. Any OpenAI Responses-compatible client can
+call it, e.g.:
+
+    client.responses.create(model="<agent>", input=json.dumps(request_contract))
 
 Deploy (recommended):
     az login
@@ -12,25 +26,49 @@ Deploy (recommended):
 Deploy (container, manual):
     docker build --platform linux/amd64 -t <acr>.azurecr.io/fmg-agent:latest .
     docker push <acr>.azurecr.io/fmg-agent:latest
-    # then register the image as a Hosted Agent (SDK/REST/azd)
-
-The Invocations protocol delivers your custom JSON payload to this server. The exact
-envelope can vary by Foundry version, so _extract_payload() accepts either the raw agent
-request contract (see agent.py) or a wrapped {"payload": {...}} / {"input_data": {...}}
-envelope. Confirm the current shape against the Foundry quickstart if you hit a mismatch.
+    # then register the image as a Hosted Agent (SDK/REST/azd), protocol=responses
 """
+import asyncio
+import json
+import logging
 import os
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+from azure.ai.agentserver.responses import (
+    CreateResponse,
+    ResponseContext,
+    ResponsesAgentServerHost,
+    ResponsesServerOptions,
+    TextResponse,
+)
 
 from agent import run_agent
 
-app = FastAPI(title="FMG Schema-Mapping Agent", version="1.0.0")
+logger = logging.getLogger(__name__)
+
+app = ResponsesAgentServerHost(
+    # This agent is stateless / single-turn (one file in, one report out) —
+    # it has no use for platform-managed conversation history.
+    options=ResponsesServerOptions(default_fetch_history_count=1),
+)
 
 
-def _extract_payload(body: dict) -> dict:
-    """Unwrap the agent request contract from whatever envelope Foundry delivers."""
+def _extract_payload(text: str) -> dict:
+    """Parse the run_agent request contract out of the caller's message text.
+
+    The text is expected to be the request contract as JSON (see agent.py),
+    optionally wrapped in a {"payload": {...}} / {"input_data": {...}} envelope
+    for callers that prefer a generic outer shape.
+    """
+    text = (text or "").strip()
+    if not text:
+        return {}
+    try:
+        body = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return {}
     if not isinstance(body, dict):
         return {}
     if "input" in body:  # already the raw contract
@@ -42,27 +80,31 @@ def _extract_payload(body: dict) -> dict:
     return body
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+# GET /health — kept alongside the SDK's built-in GET /readiness for continuity
+# with existing health-probe configuration (e.g. Logic Apps / Container Apps).
+async def _health(_request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
 
 
-@app.post("/invocations")
-async def invocations(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(
-            {"status": "failed", "error": "Body must be valid JSON"}, status_code=400
-        )
-    payload = _extract_payload(body)
-    result = run_agent(payload)
-    code = 200 if result.get("status") == "succeeded" else 500
-    return JSONResponse(result, status_code=code)
+app.add_route("/health", _health, methods=["GET"])
+
+
+@app.response_handler
+async def handle_create(
+    request: CreateResponse,
+    context: ResponseContext,
+    _cancellation_signal: asyncio.Event,
+):
+    """Run the schema-mapping agent and return the run_agent result as response text."""
+    user_text = await context.get_input_text()
+    payload = _extract_payload(user_text)
+
+    # run_agent is synchronous (pandas/LLM calls) — keep it off the event loop.
+    result = await asyncio.get_running_loop().run_in_executor(None, run_agent, payload)
+
+    return TextResponse(context, request, text=json.dumps(result))
 
 
 if __name__ == "__main__":
-    # Local dev:  uvicorn foundry_app:app --host 0.0.0.0 --port 8088
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8088")))
+    # Local dev:  python foundry_app.py
+    app.run(port=int(os.getenv("PORT", "8088")))
