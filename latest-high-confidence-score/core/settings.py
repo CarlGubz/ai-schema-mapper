@@ -14,16 +14,23 @@ ROOT = Path(__file__).resolve().parents[1]
 CUSTOMERS_DIR = ROOT / "config" / "customers"
 PROMPT_PATH = ROOT / "prompts" / "schema_mapping_prompt.md"
 
-# Dedicated, git-ignored env file for the Claude/Anthropic endpoint (kept separate from
-# any .env used for the OpenAI/Foundry path). Loaded here, before the env vars below are
-# read, and never overrides a variable already present in the real environment.
+# Dedicated, git-ignored env files, one per provider (kept separate so switching
+# providers is just adding/removing a file, not editing a shared .env). Both are loaded
+# here, before the env vars below are read, and neither overrides a variable already
+# present in the real environment. .env.openai is loaded second so that if a variable
+# (e.g. MODEL_PROVIDER) is set in both, .env.anthropic's copy wins only when no real env
+# var already set it — actual provider priority between the two keys is decided by
+# Settings.resolved_provider below, not by load order.
 _ANTHROPIC_ENV_FILE = ROOT / ".env.anthropic"
-if _ANTHROPIC_ENV_FILE.exists():
-    try:
-        from dotenv import load_dotenv  # optional dep, see requirements-anthropic.txt
+_OPENAI_ENV_FILE = ROOT / ".env.openai"
+try:
+    from dotenv import load_dotenv  # optional dep, see requirements-anthropic.txt
+    if _ANTHROPIC_ENV_FILE.exists():
         load_dotenv(_ANTHROPIC_ENV_FILE, override=False)
-    except ImportError:
-        pass  # python-dotenv not installed; fall back to real env vars only
+    if _OPENAI_ENV_FILE.exists():
+        load_dotenv(_OPENAI_ENV_FILE, override=False)
+except ImportError:
+    pass  # python-dotenv not installed; fall back to real env vars only
 
 
 class Settings:

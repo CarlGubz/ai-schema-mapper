@@ -1,9 +1,9 @@
 # Base agent dependencies
 # -r requirements.txt
 
-# Foundry Hosted Agent HTTP host (Invocations protocol)
-fastapi 
-uvicorn[standard]
+# Foundry Hosted Agent HTTP host (Responses protocol) — OpenAI-compatible
+# POST /responses, GET/DELETE /responses/{id}, POST /responses/{id}/cancel.
+azure-ai-agentserver-responses==2.1.0
 
 # Foundry model gateway (models from the Foundry catalog) + Entra ID auth.
 # Used only when MODEL_PROVIDER=foundry.
