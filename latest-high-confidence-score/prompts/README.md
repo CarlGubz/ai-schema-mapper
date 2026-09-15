@@ -8,15 +8,25 @@ is documented here, separately from the main project README, on request.
 
 | File | Role |
 |---|---|
-| `schema_mapping_prompt.md` | **Main prompt.** Used for any workbook that doesn't match a dedicated variant below. Generic — assumes nothing about a specific customer's headers. |
-| `schema_mapping_prompt.cb_mm_ltp_august.md` | Dedicated variant for `CB MM LTP AUGUST.xlsx`-shaped workbooks. |
-| `schema_mapping_prompt.rio_tinto.md` | Dedicated variant for `New Workfile Rio Tinto Aug 2026.xlsx`-shaped workbooks. |
-| `schema_mapping_prompt.westrac.md` | Dedicated variant for Westrac workbooks with a `Billiton` sheet (e.g. `[COMBINATION OF ALL FILES]...xlsx`). |
+| `schema_mapping_prompt.md` | **Main prompt — the single shared body.** Sent as-is for any workbook that matches no variant below; sent as the *first part* of the prompt for every file that does. Generic — assumes nothing about a specific customer's headers. |
+| `appendix.cb_mm_ltp_august.md` | Appended after the main body for `CB MM LTP AUGUST.xlsx`-shaped workbooks. |
+| `appendix.rio_tinto.md` | Appended after the main body for `New Workfile Rio Tinto Aug 2026.xlsx`-shaped workbooks. |
+| `appendix.westrac.md` | Appended after the main body for Westrac workbooks with a `Billiton` sheet (e.g. `[COMBINATION OF ALL FILES]...xlsx`). |
 | `schema_mapping_prompt.backup*.md` | Snapshots of the main prompt from earlier in its evolution (see History below). Not loaded by any code path. |
 
 `[01. MAIN - FORECAST] - 251113 Westrac consumption forecast -.xlsx` deliberately has
-**no** dedicated variant — see "Why one file was left out" below. It always uses the
-main prompt.
+**no** appendix — see "Why one file was left out" below. It always gets the main body
+alone.
+
+**Composition, not duplication.** These are not three standalone full prompts — an
+earlier version of this setup was (three complete copies of the main body, each with a
+different section tacked on), and it was a mistake: any future edit to the shared rules
+would have needed to be manually re-applied to three more files, with no error if one
+was missed. `core/settings.load_prompt(variant)` now always reads
+`schema_mapping_prompt.md` first, and — only when a variant is given and
+`appendix.<variant>.md` exists — appends that file's content after it. One shared body,
+edited in one place; the appendix files hold only what's genuinely specific to one
+workbook shape.
 
 ## How a variant gets picked
 
@@ -33,10 +43,11 @@ _PROMPT_VARIANTS_BY_FILENAME = {
 ```
 
 `core/mapping_engine.run_mapping` computes this once per run and passes it through to
-`refine_mapping(..., prompt_variant=...)`, which loads
-`schema_mapping_prompt.<variant>.md` if it exists, else falls back to the main prompt.
-The chosen variant is echoed in every report as `mapping_report["prompt_variant"]`
-(`"main"` when no variant matched) so it's always auditable which prompt ran.
+`refine_mapping(..., prompt_variant=...)`, which calls `load_prompt(variant)` to get the
+main body plus that variant's appendix (or just the main body if the variant is `None`
+or has no appendix file). The chosen variant is echoed in every report as
+`mapping_report["prompt_variant"]` (`"main"` when no variant matched) so it's always
+auditable which prompt actually ran.
 
 This is filename-based, not content-based, by design: it's fast, has zero false-positive
 risk of misidentifying an unrelated file, and is easy to audit. Its limitation is

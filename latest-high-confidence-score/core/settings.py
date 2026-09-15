@@ -119,16 +119,19 @@ def detect_prompt_variant(workbook_path: str) -> str | None:
 
 
 def load_prompt(variant: str | None = None) -> str:
-    """Return the schema-mapping prompt text.
+    """Return the schema-mapping prompt text: the main prompt, plus a per-workbook-shape
+    appendix (prompts/appendix.<variant>.md) when `variant` names one that exists — see
+    detect_prompt_variant + prompts/README.md.
 
-    `variant` selects prompts/schema_mapping_prompt.<variant>.md when that file exists
-    (see detect_prompt_variant + prompts/README.md); otherwise falls back to the main
-    prompts/schema_mapping_prompt.md.
+    Composed at read time from ONE shared body, not duplicated per variant: editing
+    prompts/schema_mapping_prompt.md changes every variant's shared rules immediately,
+    with no separate copies to keep in sync.
     """
-    if variant:
-        path = PROMPTS_DIR / f"schema_mapping_prompt.{variant}.md"
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as fh:
-                return fh.read()
     with open(PROMPT_PATH, "r", encoding="utf-8") as fh:
-        return fh.read()
+        text = fh.read()
+    if variant:
+        appendix_path = PROMPTS_DIR / f"appendix.{variant}.md"
+        if appendix_path.exists():
+            with open(appendix_path, "r", encoding="utf-8") as fh:
+                text = text.rstrip("\n") + "\n\n" + fh.read()
+    return text
