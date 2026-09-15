@@ -121,8 +121,13 @@ def refine_mapping(
     column_profiles: list[dict],
     deterministic: dict,
     model: str | None = None,
+    prompt_variant: str | None = None,
 ) -> dict:
     """Ask the model to review/repair ambiguous mappings. Returns {canonical: {...}}.
+
+    `prompt_variant` selects a dedicated per-workbook-shape prompt (see
+    settings.detect_prompt_variant / prompts/README.md) when one exists; otherwise the
+    main prompt is used.
 
     Never raises to the caller: on any failure it returns {} and the agent keeps the
     deterministic result.
@@ -132,7 +137,7 @@ def refine_mapping(
 
     is_anthropic = settings.MODEL_PROVIDER == "anthropic"
     model = model or (settings.ANTHROPIC_MODEL if is_anthropic else settings.OPENAI_MODEL)
-    system_prompt = load_prompt()
+    system_prompt = load_prompt(prompt_variant)
 
     user_payload = {
         "target": target,

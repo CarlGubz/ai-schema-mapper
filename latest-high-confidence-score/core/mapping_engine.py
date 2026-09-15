@@ -9,7 +9,7 @@ import pandas as pd
 
 from . import profiling, scorer, builders, normalizer
 from .llm_mapper import refine_mapping
-from .settings import settings
+from .settings import settings, detect_prompt_variant
 
 # Content-rescue thresholds for sheet selection (see _content_score / run_mapping).
 # A sheet whose name matches no configured pattern for a role can still be picked, but
@@ -45,6 +45,7 @@ def _pick_sheet(frames: dict, candidates: list[str], fields: list[dict], scoring
 
 
 def run_mapping(workbook_path: str, cfg: dict) -> dict:
+    prompt_variant = detect_prompt_variant(workbook_path)
     frames = profiling.read_workbook(workbook_path)
     sheet_match = profiling.match_sheets(list(frames.keys()), cfg["sheet_config"])
     role_target = {e["role"]: e["target"] for e in cfg["sheet_config"]}
@@ -136,6 +137,7 @@ def run_mapping(workbook_path: str, cfg: dict) -> dict:
         "row_counts": {},
         "warnings": warnings,
         "llm_used": settings.llm_configured(),
+        "prompt_variant": prompt_variant or "main",
     }
 
     outputs = {}          # target -> DataFrame
@@ -161,27 +163,47 @@ def run_mapping(workbook_path: str, cfg: dict) -> dict:
         # LLM refinement (alias reasoning + notes); deterministic numbers stand unless LLM
         # picks a *different valid* column, in which case we keep the deterministic score
         # for that column but record the LLM note.
-        llm = refine_mapping(target, tcfg["fields"], profiles, det)
+        llm = refine_mapping(target, tcfg["fields"], profiles, det, prompt_variant=prompt_variant)
 
         resolved, rows = {}, []
+        auto_accept_bar = cfg["scoring"].get("bands", {}).get("auto_accept", 0.9)
         for f in tcfg["fields"]:
             can = f["canonical"]
             sc = f.get("source_class")
             if sc == "customer_file":
                 d = det.get(can, {})
                 src = d.get("source_column")
+                conf = d.get("confidence", 0.0)
+                band = d.get("band", "reject")
                 note = ""
-                if can in llm and llm[can].get("source_column") and llm[can]["source_column"] != src:
-                    # LLM proposes a different valid column -> accept its choice, flag review
-                    src = llm[can]["source_column"]
-                    note = f"LLM override: {llm[can].get('notes','')}"
-                elif can in llm:
-                    note = llm[can].get("notes", "")
+                llm_d = llm.get(can)
+                llm_col = llm_d.get("source_column") if llm_d else None
+
+                if conf < auto_accept_bar and llm_d and llm_col:
+                    # Deterministic ruling didn't clear auto_accept: skip it for this
+                    # field and let the model's own column choice + calibrated
+                    # confidence stand instead of the arithmetic score. See
+                    # prompts/README.md ("Model-authoritative mapping below auto_accept").
+                    src = llm_col
+                    conf = round(float(llm_d.get("confidence", conf)), 3)
+                    band = scorer.band_for(conf, cfg["scoring"].get("bands", {}))
+                    note = (
+                        f"Model-decided (deterministic {d.get('confidence', 0.0):.2f} "
+                        f"< {auto_accept_bar:.2f}): {llm_d.get('notes', '')}"
+                    )
+                elif llm_d and llm_col and llm_col != src:
+                    # Deterministic pick already cleared auto_accept; the LLM may still
+                    # correct the column for review, but its computed score stands.
+                    src = llm_col
+                    note = f"LLM override: {llm_d.get('notes', '')}"
+                elif llm_d:
+                    note = llm_d.get("notes", "")
+
                 resolved[can] = src
                 rows.append({
                     "canonical_field": can, "source_column": src, "source_class": sc,
                     "name_score": d.get("name_score", 0.0), "value_score": d.get("value_score", 0.0),
-                    "confidence": d.get("confidence", 0.0), "band": d.get("band", "reject"),
+                    "confidence": conf, "band": band,
                     "status": "mapped" if src else "unmapped", "notes": note,
                 })
             elif sc == "constant":
@@ -197,11 +219,25 @@ def run_mapping(workbook_path: str, cfg: dict) -> dict:
                              "notes": f"join={f.get('join')}"})
         report["mappings"][target] = rows
 
-        conf_vals = [r["confidence"] for r in rows
-                     if r["source_class"] == "customer_file" and r["confidence"] is not None]
+        # The summary mean is scoped to fields actually written to <target>.csv
+        # (output_columns) — not every customer_file field. Some customer_file fields
+        # (e.g. FunctionalLoc, MeasTotCtr) exist only as internal join-key/derived-input
+        # plumbing and are never in output_columns; including them would understate the
+        # quality of what customers actually receive. They stay fully visible in
+        # `mappings` and are reported separately here, never hidden.
+        output_cols = set(tcfg.get("output_columns", []))
+        customer_rows = [r for r in rows if r["source_class"] == "customer_file" and r["confidence"] is not None]
+        deliverable_vals = [r["confidence"] for r in customer_rows if r["canonical_field"] in output_cols]
+        support_rows = [r for r in customer_rows if r["canonical_field"] not in output_cols]
+
         report["column_confidence_summary"][f"{target}_mean"] = (
-            round(sum(conf_vals) / len(conf_vals), 3) if conf_vals else None
+            round(sum(deliverable_vals) / len(deliverable_vals), 3) if deliverable_vals else None
         )
+        if support_rows:
+            report["column_confidence_summary"][f"{target}_support_fields"] = [
+                {"canonical_field": r["canonical_field"], "confidence": r["confidence"]}
+                for r in support_rows
+            ]
 
         # normalize/quarantine
         key_field = cfg["normalization"]["join_key_canonical"]

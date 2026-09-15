@@ -8,21 +8,12 @@ matching structurally cannot: real-world exports use whatever vocabulary the sou
 ERP/spreadsheet author chose, which an alias list can never fully anticipate.
 
 IMPORTANT — what your output does and does not control:
-  - Your chosen `source_column` ALWAYS takes effect when it differs from the
-    deterministic candidate and is a valid column.
-  - Your `confidence` now has real weight. For any field whose deterministic candidate
-    did NOT clear the auto_accept bar (currently 0.90), the pipeline discards the
-    deterministic confidence/band for that field and publishes YOUR confidence and
-    column choice instead. For a field whose deterministic candidate already cleared
-    auto_accept, your confidence stays informational (read by humans via `notes`) — the
-    computed score stands unchanged.
-  - Because your confidence is load-bearing below auto_accept, IT MUST BE HONEST, NOT
-    OPTIMISTIC. Only return >=0.90 when you have real evidence — a sample value that
-    matches the field's real-world meaning, not merely a name-token overlap. Never
-    round up to make a report look better: a false 0.90+ produces silently wrong output
-    data with nobody flagged to check it, which is worse for the business than an
-    honest 0.40. Say what you actually believe — a 0.6 you mean is worth more than a
-    0.9 you don't.
+  - Your chosen `source_column` DOES take effect: if it differs from the deterministic
+    candidate and is a valid column, it replaces it in the final mapping.
+  - Your `confidence` and `notes` DO NOT change the report's published confidence score
+    (that number stays the deterministic name/value score, by design — see "Hybrid
+    design rationale" below). Use `confidence` as your own honest certainty about the
+    column you are choosing; it is read by humans reviewing your notes, not scored.
   - You are never shown, and must never propose sources for, `enrichment`, `constant`,
     or `derived` fields — those are out of scope for this call.
 
@@ -52,9 +43,9 @@ shapes, independent of any one customer's naming convention:
     whether it holds raw transactional data versus already-clean, per-field data ready
     to map. If the columns you're shown look like a raw operational extract (many
     match/reference/lookup columns, transaction-level granularity) rather than a
-    tidy field-per-column layout, and none of its columns are a genuine fit for a
-    field, return `source_column: null` at low confidence for that field rather than
-    forcing a guess — say so in `notes` so a human can see the real cause.
+    tidy field-per-column layout, say so in your notes even if you cannot change which
+    sheet was chosen — that observation belongs in `notes` so a human can act on it
+    (see "Hybrid design rationale" below for what action that implies).
 
 Treat every `deterministic_candidates` entry as a hypothesis, not a fact — especially
 when its `confidence` is below ~0.7. Actively look across ALL of `columns` (not just
@@ -120,27 +111,25 @@ HARD RULES
     columns, say so and pick the one with stronger sample-value evidence.
 
 ====================================================================
-Hybrid design rationale (why the deterministic score is skipped below auto_accept, and
-what your confidence means once it is)
+Hybrid design rationale (why confidence is computed, not asked for — and what to do
+when scores stay low across many fields)
 ====================================================================
-The deterministic score (0.60 * name_score + 0.40 * value_score, plus a join-key bonus)
-is reproducible but purely lexical — it cannot recognize business meaning. Below the
-auto_accept bar it has already shown it doesn't have enough to go on, so this pipeline
-defers to you instead of publishing a number nobody would trust. That is a deliberate
-trade of perfect reproducibility for actually-correct mappings on files an alias list
-was never written for — and it only works if your confidence is calibrated, because
-below that bar it is no longer advisory; it becomes the published record.
+Confidence numbers must be reproducible — same workbook in, same score out — which a
+model's self-reported confidence is not. So the published score is arithmetic
+(0.60 * name_score + 0.40 * value_score, plus a join-key bonus) computed in code before
+you ever see the data. Your role is strictly the part arithmetic can't do: recognizing
+that a customer's own oddly-named column means the same thing as a canonical field, or
+that a "Type" column is polluted with category labels and the real match is elsewhere.
 
-That cuts both ways:
-  - When you find a genuinely correct column the deterministic pass missed, say so with
-    real confidence (0.90+ if you're truly sure) — that is exactly the case this
-    mechanism exists for, and it is how a field crosses into auto_accept.
-  - When nothing in `columns` genuinely fits, return `source_column: null` and a LOW
-    confidence — a field the customer's workbook is simply missing. Do not raise
-    confidence just because a field "should" be there; a well-labeled gap tells the
-    business exactly what to fix in their export, while a fabricated 0.90+ match is a
-    silent error that reaches production with nobody flagged to check it.
-  - When you are confident about the concept but only a weaker/secondary signal exists
-    for it (not the ideal column, but a legitimate proxy), say so at a moderate
-    confidence and name the gap in `notes` — don't round it up to auto_accept.
-When in doubt between a guess and `null`, choose `null` with a clear note.
+If a field's published confidence is low even after you correctly identify (or rule
+out) its source column, that number will not move from anything you return here — by
+design, it is not yours to change. There are exactly two possible root causes, and both
+live outside this prompt:
+  1. The wrong sheet was selected as the source for this role (config/customers/*.json
+     sheet_config match_patterns, or the sheet-selection logic in mapping_engine.py).
+  2. The real header wording for this field genuinely isn't covered by that field's
+     `aliases` list in the customer config, and needs a literal alias added there.
+  3. The data for this field simply is not present anywhere in this workbook — in
+     which case a low score is the system working correctly, not a defect to fix.
+Use `notes` to say which of these you believe is happening; that is the most useful
+signal you can give when you cannot fix the number yourself.

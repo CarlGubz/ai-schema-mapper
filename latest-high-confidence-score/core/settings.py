@@ -96,7 +96,39 @@ def list_customers() -> list[str]:
     )
 
 
-def load_prompt() -> str:
-    """Return the schema-mapping prompt text (the one created for this project)."""
+PROMPTS_DIR = PROMPT_PATH.parent
+
+# Filename substring -> dedicated prompt variant (see prompts/README.md). Matched
+# case-insensitively against the workbook's basename. Anything that doesn't match
+# (including files intentionally left off this list) falls back to the main prompt.
+_PROMPT_VARIANTS_BY_FILENAME = {
+    "cb mm ltp": "cb_mm_ltp_august",
+    "rio tinto": "rio_tinto",
+    "billiton": "westrac",
+    "combination of all files": "westrac",
+}
+
+
+def detect_prompt_variant(workbook_path: str) -> str | None:
+    """Pick a dedicated prompt variant from the workbook's filename, if one exists."""
+    name = Path(workbook_path).name.lower()
+    for needle, variant in _PROMPT_VARIANTS_BY_FILENAME.items():
+        if needle in name:
+            return variant
+    return None
+
+
+def load_prompt(variant: str | None = None) -> str:
+    """Return the schema-mapping prompt text.
+
+    `variant` selects prompts/schema_mapping_prompt.<variant>.md when that file exists
+    (see detect_prompt_variant + prompts/README.md); otherwise falls back to the main
+    prompts/schema_mapping_prompt.md.
+    """
+    if variant:
+        path = PROMPTS_DIR / f"schema_mapping_prompt.{variant}.md"
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as fh:
+                return fh.read()
     with open(PROMPT_PATH, "r", encoding="utf-8") as fh:
         return fh.read()

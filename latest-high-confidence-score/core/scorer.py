@@ -12,6 +12,21 @@ def _tokens(text: str) -> set:
     return set(re.sub(r"[^a-z0-9]", " ", str(text).lower()).split())
 
 
+def band_for(confidence: float, bands: dict) -> str:
+    """Map a confidence value to its band using the same thresholds as score_target.
+
+    Shared so a non-deterministic confidence (e.g. the LLM's, when it is allowed to
+    stand in for a low-confidence deterministic pick) is banded identically.
+    """
+    if confidence >= bands.get("auto_accept", 0.9):
+        return "auto_accept"
+    if confidence >= bands.get("accept_review", 0.7):
+        return "accept_review"
+    if confidence >= bands.get("low_review", 0.5):
+        return "low_review"
+    return "reject"
+
+
 def name_score(header: str, aliases: list[str]) -> float:
     ht = " ".join(sorted(_tokens(header)))
     best = 0.0
@@ -70,12 +85,7 @@ def score_target(
         used_f.add(fi)
         used_c.add(col)
         c = round(min(conf, cap), 3)
-        band = (
-            "auto_accept" if c >= bands["auto_accept"]
-            else "accept_review" if c >= bands["accept_review"]
-            else "low_review" if c >= bands["low_review"]
-            else "reject"
-        )
+        band = band_for(c, bands)
         out[mappable[fi]["canonical"]] = {
             "source_column": col,
             "name_score": ns,
