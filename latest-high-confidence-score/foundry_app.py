@@ -57,9 +57,11 @@ app = ResponsesAgentServerHost(
 def _extract_payload(text: str) -> dict:
     """Parse the run_agent request contract out of the caller's message text.
 
-    The text is expected to be the request contract as JSON (see agent.py),
-    optionally wrapped in a {"payload": {...}} / {"input_data": {...}} envelope
-    for callers that prefer a generic outer shape.
+    The text is expected to be the request contract as JSON (see agent.py) — either
+    workflow: {"input": ...} (one workbook) or {"reference_files": [...]} (one or more
+    standalone CSVs, see REFERENCE_FILES.md) — optionally wrapped in a
+    {"payload": {...}} / {"input_data": {...}} envelope for callers that prefer a
+    generic outer shape.
     """
     text = (text or "").strip()
     if not text:
@@ -70,7 +72,7 @@ def _extract_payload(text: str) -> dict:
         return {}
     if not isinstance(body, dict):
         return {}
-    if "input" in body:  # already the raw contract
+    if "input" in body or "reference_files" in body:  # already the raw contract
         return body
     for key in ("payload", "input_data", "body", "data"):
         inner = body.get(key)

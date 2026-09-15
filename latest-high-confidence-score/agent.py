@@ -4,10 +4,13 @@ run_agent(request) is the single callable used by every surface (Azure Function,
 tests). It is transport-agnostic: give it a dict, get a dict back. Logic Apps calls the
 HTTP Function which is a thin wrapper around this.
 
-Request contract (all keys optional except input):
+Request contract (all keys optional except input/reference_files — exactly one required):
 {
   "customer_id": "default",                 # which config/customers/*.json to use
   "input":  { "path": "..."} | {"content_base64": "...", "filename": "x.xlsx"},
+  "reference_files": [                      # ALTERNATIVE to "input" — see REFERENCE_FILES.md.
+      { "path": "..." } | {"content_base64": "...", "filename": "LTP.csv"}, ...
+  ],
   "output_dir": "…",                        # local backend only
   "sheet_config_override": [ ... ],         # optional per-call override (flexible)
   "return_inline": false                    # if true, include CSVs base64 in response
@@ -31,7 +34,7 @@ import copy
 from datetime import datetime, timezone
 
 from core.settings import load_customer_config
-from core.mapping_engine import run_mapping
+from core.mapping_engine import run_mapping, run_mapping_from_reference_files
 from core.storage import get_storage
 
 
@@ -53,9 +56,20 @@ def run_agent(request: dict) -> dict:
             cfg["sheet_config"] = request["sheet_config_override"]
 
         storage = get_storage(request.get("output_dir"))
-        input_path = storage.fetch_input(request["input"])
 
-        result = run_mapping(input_path, cfg)
+        if request.get("reference_files"):
+            # Additional workflow: standalone reference CSVs instead of one workbook —
+            # see core/mapping_engine.run_mapping_from_reference_files + REFERENCE_FILES.md.
+            input_paths = [storage.fetch_input(ref) for ref in request["reference_files"]]
+            result = run_mapping_from_reference_files(input_paths, cfg)
+        elif request.get("input"):
+            input_path = storage.fetch_input(request["input"])
+            result = run_mapping(input_path, cfg)
+        else:
+            raise ValueError(
+                "request must include either 'input' (a workbook) or "
+                "'reference_files' (standalone reference CSVs) — see REFERENCE_FILES.md"
+            )
 
         file_map = {"NEO": "NEO.csv", "LAO": "LAO.csv"}
         out_locations, out_inline = {}, {}

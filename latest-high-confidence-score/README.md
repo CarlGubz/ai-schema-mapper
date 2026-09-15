@@ -127,6 +127,31 @@ Apps can post file bytes directly.
 The Function is a thin wrapper — all logic is in `agent.run_agent`, so you can also call
 the same core from a Container App, Durable Function, or queue trigger without changes.
 
+### Passing Blob paths instead of inline bytes
+
+Set `STORAGE_BACKEND=azure_blob` (+ `AZURE_STORAGE_CONNECTION_STRING`, `OUTPUT_CONTAINER`)
+and `"path"` in `input`/`reference_files` can be an actual Blob location instead of
+`content_base64` — `core/storage.AzureBlobStorage` downloads it before processing and
+uploads NEO/LAO/Normalized back to Blob, returning their URLs in `outputs`. Three shapes
+are accepted, in order of how directly they name a blob:
+
+1. A full blob URL with a SAS token already embedded — used as-is, no extra auth (what
+   most Logic Apps blob connector / "Create SAS URI" actions hand you).
+2. A full blob URL with no SAS — authenticated via `AZURE_STORAGE_CONNECTION_STRING` if
+   set, else via Entra ID (`DefaultAzureCredential`: managed identity in Azure, `az
+   login` locally).
+3. A bare `"<container>/<blob_name>"` path — always resolved via
+   `AZURE_STORAGE_CONNECTION_STRING`.
+
+```json
+{ "customer_id": "default", "reference_files": [
+    { "path": "https://<account>.blob.core.windows.net/<container>/LTP.csv?sv=...&sig=..." }
+] }
+```
+
+`content_base64` still works unchanged for either backend — the shapes aren't mutually
+exclusive per request.
+
 ## 5b. Deploying to Microsoft Foundry (Hosted Agents)
 
 The same core deploys to **Foundry Agent Service → Hosted Agents** ("bring your own
@@ -237,6 +262,15 @@ USE_LLM=false python tests/test_smoke.py CB_MM_LTP_AUGUST.xlsx
 Verified run on `CB_MM_LTP_AUGUST.xlsx`: **NEO 9,296 rows · LAO 22,893 rows ·
 Normalized 1,403 rows**; NEO/LAO headers match `FMG_NEO_Aug_26.csv` / `FMG_LAO_Aug_26.csv`
 exactly; customer-file confidence means **NEO 0.813 / LAO 0.99**.
+
+**Additional workflow — standalone reference CSVs instead of one workbook** (an LTP
+export and a Measurement-Points export delivered as their own files, e.g. from Blob
+storage, rather than as tabs in one workbook): see **[REFERENCE_FILES.md](REFERENCE_FILES.md)**.
+
+```bash
+python run_local.py --reference-files ./test-data/LTP.csv ./test-data/Measurement-Points.csv \
+    --customer default --out ./_out
+```
 
 ## 8. Onboarding a new customer (no code)
 

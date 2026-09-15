@@ -9,6 +9,8 @@ import re
 import warnings
 import pandas as pd
 
+from .transforms import clean_numeric_text
+
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas")
 
 
@@ -45,6 +47,49 @@ def read_workbook(path: str) -> dict:
     return frames
 
 
+def _normalize_match_text(text: str) -> str:
+    """Collapse separators to single spaces for filename matching: 'Measurement-Points.csv'
+    and 'measurement_points_export.csv' and the configured pattern 'measurement points'
+    all compare equal, regardless of which punctuation a customer's export tool used."""
+    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
+
+
+def match_reference_files(filenames: list[str], sheet_config: list[dict]) -> dict:
+    """Same shape/contract as match_sheets, but matches standalone reference-file
+    basenames (e.g. blob filenames like 'LTP_2026_08.csv') against each role's
+    filename_patterns — falling back to match_patterns for a config entry that hasn't
+    defined filename_patterns yet, so the reference-file workflow degrades gracefully
+    on an older customer config instead of failing to match anything.
+
+    Matching is punctuation-insensitive (see _normalize_match_text) since real-world
+    filenames vary in separators far more than the Excel tab names match_sheets deals
+    with (LTP.csv, LTP_2026_08.csv, Measurement-Points.csv, ...).
+    """
+    matched, unmatched_roles = {}, []
+    normalized = {f: _normalize_match_text(f) for f in filenames}
+    for entry in sheet_config:
+        role, target = entry["role"], entry["target"]
+        patterns = [
+            _normalize_match_text(p)
+            for p in entry.get("filename_patterns") or entry.get("match_patterns", [])
+        ]
+        hits = [f for f, norm in normalized.items() if any(p in norm for p in patterns)]
+        if not hits:
+            unmatched_roles.append(role)
+            continue
+        matched[role] = {"candidates": hits, "target": target}
+    return {"matched": matched, "unmatched_roles": unmatched_roles}
+
+
+def read_reference_csv(path: str) -> pd.DataFrame:
+    """Read a standalone reference CSV (e.g. an LTP or Measurement-Points export
+    delivered as its own blob file) the same way a workbook sheet is read: drop
+    fully-empty rows, reset the index. utf-8-sig transparently handles a leading BOM
+    some export tools add (harmless if the file doesn't have one)."""
+    df = pd.read_csv(path, encoding="utf-8-sig")
+    return df.dropna(how="all").reset_index(drop=True)
+
+
 def _value_evidence(series: pd.Series, dtype: str) -> float:
     s = series.dropna()
     if len(s) == 0:
@@ -52,7 +97,7 @@ def _value_evidence(series: pd.Series, dtype: str) -> float:
     if dtype == "floc":
         return float(s.astype(str).str.contains(r"-", na=False).mean())
     if dtype == "numeric":
-        return float(pd.to_numeric(s, errors="coerce").notna().mean())
+        return float(pd.to_numeric(clean_numeric_text(s), errors="coerce").notna().mean())
     if dtype == "date":
         try:
             parsed = pd.to_datetime(s, errors="coerce", dayfirst=True, utc=True)

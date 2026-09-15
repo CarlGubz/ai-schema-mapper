@@ -4,10 +4,10 @@
   "customer_id": "REPLACE_ME",
   "description": "Human-readable name of the customer / workbook family.",
 
-  "__comment_sheets": "Add or remove sheet roles here. match_patterns are case-insensitive substrings tested against each tab name. To support a new sheet -> output, add a new entry and a matching block under 'targets'.",
+  "__comment_sheets": "Add or remove sheet roles here. match_patterns are case-insensitive substrings tested against each tab name (workbook workflow). filename_patterns are the same idea but tested against a standalone reference file's basename instead (see REFERENCE_FILES.md) — punctuation-insensitive, so 'LTP_2026_08.csv' still matches 'ltp'. To support a new sheet -> output, add a new entry and a matching block under 'targets'.",
   "sheet_config": [
-    { "role": "LTP",                "target": "NEO", "match_patterns": ["ltp", "major component"] },
-    { "role": "MEASUREMENT_POINTS", "target": "LAO", "match_patterns": ["measurement point", "measuring point"] }
+    { "role": "LTP",                "target": "NEO", "match_patterns": ["ltp", "major component"], "filename_patterns": ["ltp"] },
+    { "role": "MEASUREMENT_POINTS", "target": "LAO", "match_patterns": ["measurement point", "measuring point"], "filename_patterns": ["measurement points", "measuring points"] }
   ],
 
   "constants": {

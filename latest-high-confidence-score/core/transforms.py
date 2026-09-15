@@ -14,8 +14,22 @@ def to_yyyymmdd(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, errors="coerce", dayfirst=True, utc=True).dt.strftime("%Y%m%d")
 
 
+def clean_numeric_text(series: pd.Series) -> pd.Series:
+    """Strip thousands-separator commas and stray padding whitespace (e.g. ' 20,000 ')
+    before numeric parsing. Needed whenever a number arrives as formatted text — always
+    true for a standalone CSV reference file (see REFERENCE_FILES.md), and sometimes
+    true even from a workbook cell exported as text. A genuinely numeric dtype series
+    passes through unchanged. Shared with profiling._value_evidence so the scorer's
+    numeric-evidence signal and this transform never disagree about what "numeric"
+    means for the same column.
+    """
+    if pd.api.types.is_numeric_dtype(series):
+        return series
+    return series.astype("string").str.strip().str.replace(",", "", regex=False)
+
+
 def to_numeric(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(series, errors="coerce")
+    return pd.to_numeric(clean_numeric_text(series), errors="coerce")
 
 
 def as_str(series: pd.Series) -> pd.Series:

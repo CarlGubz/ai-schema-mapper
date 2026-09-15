@@ -11,6 +11,10 @@
         "replacement schedule",
         "parts",
         "billiton"
+      ],
+      "__comment_filename_patterns": "Matched against a standalone reference file's basename (see REFERENCE_FILES.md), not a workbook tab — punctuation-insensitive, so 'LTP_2026_08.csv' matches 'ltp' just like 'LTP.csv' does. Add more as new naming conventions show up.",
+      "filename_patterns": [
+        "ltp"
       ]
     },
     {
@@ -21,6 +25,12 @@
         "measuring point",
         "meas point",
         "IK07","ik07"
+      ],
+      "filename_patterns": [
+        "measurement points",
+        "measuring points",
+        "meas points",
+        "ik07"
       ]
     }
   ],

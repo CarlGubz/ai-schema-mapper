@@ -2,6 +2,7 @@ pandas
 openpyxl 
 openai
 azure-functions
-# Optional (enable when STORAGE_BACKEND=azure_blob):
-# azure-storage-blob>=12.19
+# Optional (enable when STORAGE_BACKEND=azure_blob) — see core/storage.AzureBlobStorage:
+azure-storage-blob
+azure-identity  # only needed for the no-SAS/no-connection-string Entra ID auth fallback
 #yes

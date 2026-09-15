@@ -3,8 +3,15 @@
 Order (unchanged from the project):
   detect sheets -> profile columns -> deterministic score -> LLM refine (optional)
   -> normalize/quarantine rows -> build NEO/LAO -> assemble mapping_report.
+
+Two entrypoints share that same order via _assemble_outputs(): run_mapping() resolves
+frames from a multi-sheet workbook (sheet name -> role); run_mapping_from_reference_files()
+resolves frames from standalone reference CSVs (filename -> role) instead — see
+REFERENCE_FILES.md for the latter. Both hand _assemble_outputs() the same shape:
+{role: frame-key} into a {frame-key: DataFrame} pool, plus the customer config.
 """
 from __future__ import annotations
+import os
 import pandas as pd
 
 from . import profiling, scorer, builders, normalizer
@@ -115,8 +122,76 @@ def run_mapping(workbook_path: str, cfg: dict) -> dict:
         else:
             still_unmatched.append(role)
 
+    return _assemble_outputs(frames, role_to_sheet, cfg, prompt_variant, warnings, still_unmatched)
+
+
+def run_mapping_from_reference_files(file_paths: list[str], cfg: dict) -> dict:
+    """Additional workflow: build NEO and/or LAO directly from standalone CSVs (e.g. an
+    LTP export and/or a Measurement-Points export) instead of a single multi-sheet
+    workbook. Each file is an independent primary source for its own target — LTP.csv
+    alone produces NEO only, Measurement-Points.csv alone produces LAO only, and both
+    together additionally get the cross-file join-key bonus (see the mp_role handling
+    in _assemble_outputs). Call this with just the one file you have; there's no
+    requirement to post both. A file's role — LTP -> NEO, MEASUREMENT_POINTS -> LAO —
+    is auto-detected from its filename via sheet_config[].filename_patterns (see
+    profiling.match_reference_files): the same role/target wiring already used by
+    run_mapping(), just matched against filenames instead of Excel tab names. See
+    REFERENCE_FILES.md.
+    """
+    basenames = {os.path.basename(p): p for p in file_paths}
+    frames = {name: profiling.read_reference_csv(path) for name, path in basenames.items()}
+
+    file_match = profiling.match_reference_files(list(frames.keys()), cfg["sheet_config"])
+    role_to_sheet, warnings, claimed = {}, [], set()
+
+    for role, info in file_match["matched"].items():
+        candidates = [f for f in info["candidates"] if f not in claimed] or info["candidates"]
+        if len(candidates) > 1:
+            # More than one posted file matched this role's filename_patterns — tie-break
+            # by content score, same as an ambiguous workbook sheet match.
+            target_fields = cfg["targets"].get(info["target"], {}).get("fields", [])
+            chosen = _pick_sheet(frames, candidates, target_fields, cfg["scoring"])
+            warnings.append(
+                f"Role {role} matched multiple reference files {candidates}; "
+                f"picked '{chosen}' by content score."
+            )
+        else:
+            chosen = candidates[0]
+        role_to_sheet[role] = chosen
+        claimed.add(chosen)
+
+    still_unmatched = list(file_match["unmatched_roles"])
+    if still_unmatched:
+        # Expected and benign when you intentionally posted only file(s) for other
+        # role(s) (e.g. just LTP.csv, to get NEO only) — that role's target is simply
+        # skipped below (see _assemble_outputs). Only worth a closer look if you
+        # *did* post a file for this role and it still didn't match: check
+        # filename_patterns in the customer config against the actual filename.
+        warnings.append(
+            f"No file provided (or matched) for role(s) {still_unmatched} — "
+            f"its target output is skipped this call."
+        )
+
+    # Reuse the workbook-variant prompt selection against whichever posted filename (if
+    # any) happens to match a known customer/workbook-shape pattern (see settings.py).
+    prompt_variant = next((v for p in file_paths if (v := detect_prompt_variant(p))), None)
+
+    return _assemble_outputs(frames, role_to_sheet, cfg, prompt_variant, warnings, still_unmatched)
+
+
+def _assemble_outputs(
+    frames: dict,
+    role_to_sheet: dict,
+    cfg: dict,
+    prompt_variant: str | None,
+    warnings: list[str],
+    unmatched_roles: list[str],
+) -> dict:
+    """Shared tail of both entrypoints: profile -> score -> LLM refine -> normalize ->
+    build, then assemble the mapping_report. `role_to_sheet` maps a role (e.g. "LTP")
+    to a key into `frames` — a workbook sheet name or a reference-file basename.
+    """
     # Measurement-Points functional-location values for the LTP join-key bonus
-    # mp_role = "MEASUREMENT_POINTS"
     mp_role = cfg["normalization"].get("join_key_role", "MEASUREMENT_POINTS")
     mp_key_values = set()
     if mp_role in role_to_sheet:
@@ -131,7 +206,7 @@ def run_mapping(workbook_path: str, cfg: dict) -> dict:
             {"role": r, "sheet_name": s, "rows": int(len(frames[s]))}
             for r, s in role_to_sheet.items()
         ],
-        "unmatched_roles": still_unmatched,
+        "unmatched_roles": unmatched_roles,
         "mappings": {},
         "column_confidence_summary": {},
         "row_counts": {},
