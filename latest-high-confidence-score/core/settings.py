@@ -57,13 +57,35 @@ class Settings:
     # Master switch — when false, the agent runs the deterministic path only.
     USE_LLM: bool = os.getenv("USE_LLM", "true").lower() == "true"
 
+    @property
+    def resolved_provider(self) -> str:
+        """The provider actually used, auto-selected by key availability.
+
+        `MODEL_PROVIDER=foundry` is always honored explicitly (it needs a deliberately
+        configured project endpoint + Entra ID auth, so it's never picked implicitly).
+        Otherwise: OPENAI_API_KEY wins whenever it's set; ANTHROPIC_API_KEY is the
+        fallback when it isn't — regardless of what MODEL_PROVIDER happens to say (e.g.
+        a customer's .env.anthropic can force MODEL_PROVIDER=anthropic, but an
+        OPENAI_API_KEY present in the real environment still takes priority). If
+        neither key is set, MODEL_PROVIDER is returned as-is so llm_configured() can
+        report False with the right reason.
+        """
+        if self.MODEL_PROVIDER == "foundry":
+            return "foundry"
+        if self.OPENAI_API_KEY:
+            return "openai"
+        if self.ANTHROPIC_API_KEY:
+            return "anthropic"
+        return self.MODEL_PROVIDER
+
     def llm_configured(self) -> bool:
         """True when the LLM refinement layer can actually run (single source of truth)."""
         if not self.USE_LLM:
             return False
-        if self.MODEL_PROVIDER == "foundry":
+        provider = self.resolved_provider
+        if provider == "foundry":
             return bool(self.FOUNDRY_PROJECT_ENDPOINT)
-        if self.MODEL_PROVIDER == "anthropic":
+        if provider == "anthropic":
             return bool(self.ANTHROPIC_API_KEY)
         return bool(self.OPENAI_API_KEY)
 

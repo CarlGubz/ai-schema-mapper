@@ -42,8 +42,11 @@ def _client():
     - foundry : Foundry project gateway client (models from the Foundry catalog),
                 authenticated with Entra ID via DefaultAzureCredential — no API key.
     Both expose the same Responses API surface used by refine_mapping().
+
+    Provider selection here follows settings.resolved_provider (OpenAI first,
+    Anthropic fallback, foundry only when explicitly configured) — see settings.py.
     """
-    if settings.MODEL_PROVIDER == "foundry":
+    if settings.resolved_provider == "foundry":
         try:
             from azure.identity import DefaultAzureCredential
             from azure.ai.projects import AIProjectClient
@@ -135,7 +138,7 @@ def refine_mapping(
     if not settings.llm_configured():
         return {}
 
-    is_anthropic = settings.MODEL_PROVIDER == "anthropic"
+    is_anthropic = settings.resolved_provider == "anthropic"
     model = model or (settings.ANTHROPIC_MODEL if is_anthropic else settings.OPENAI_MODEL)
     system_prompt = load_prompt(prompt_variant)
 
